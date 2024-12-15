@@ -1,0 +1,107 @@
+import '../utils/common.js'
+import { readWallets, getBalance, timestampToDate, getProxy, aptPrice, getKeyByValue } from '../utils/common.js'
+import axios from "axios"
+import { Table } from 'console-table-printer'
+import { createObjectCsvWriter } from 'csv-writer'
+import moment from 'moment'
+import cliProgress from 'cli-progress'
+import cloudscraper from 'cloudscraper'
+import { config } from '../user_data/config.js'
+import { cleanByChecker, getWalletFromDB, saveWalletToDB } from '../utils/db.js'
+
+const columns = [
+    { name: 'n', color: 'green', alignment: "right" },
+    { name: 'wallet', color: 'green', alignment: "right" },
+    { name: 'AptosName', alignment: 'right', color: 'cyan' },
+    { name: 'GalxePoints', alignment: 'right', color: 'cyan' },
+    { name: 'APT', alignment: 'right', color: 'cyan' },
+    { name: 'USDC', alignment: 'right', color: 'cyan' },
+    { name: 'USDT', alignment: 'right', color: 'cyan' },
+    { name: 'DAI', alignment: 'right', color: 'cyan' },
+    { name: 'TX Count', alignment: 'right', color: 'cyan' },
+    { name: 'Days', alignment: 'right', color: 'cyan' },
+    { name: 'Weeks', alignment: 'right', color: 'cyan' },
+    { name: 'Months', alignment: 'right', color: 'cyan' },
+    { name: 'First tx', alignment: 'right', color: 'cyan' },
+    { name: 'Last tx', alignment: 'right', color: 'cyan' },
+]
+
+const headers = [
+    { id: 'n', title: '№' },
+    { id: 'wallet', title: 'wallet' },
+    { id: 'AptosName', title: 'AptosName' },
+    { id: 'GalxePoints', title: 'GalxePoints' },
+    { id: 'APT', title: 'APT' },
+    { id: 'USDC', title: 'USDC' },
+    { id: 'USDT', title: 'USDT' },
+    { id: 'DAI', title: 'DAI' },
+    { id: 'TX Count', title: 'TX Count' },
+    { id: 'Days', title: 'Days' },
+    { id: 'Weeks', title: 'Weeks' },
+    { id: 'Months', title: 'Months' },
+    { id: 'First tx', title: 'First tx' },
+    { id: 'Last tx', title: 'Last tx' },
+]
+
+const reqheaders = {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9,ru;q=0.8,bg;q=0.7",
+    "if-none-match": "W/\"451e-hvtWIYx9P6o5M2DHchFA2Z/RoGc\"",
+    "sec-ch-ua": "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"Windows\"",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+    "Referer": "https://tracemove.io/",
+    "Referrer-Policy": "strict-origin-when-cross-origin"
+}
+
+const apiUrl = "https://mainnet-aptos-api.nodereal.io/api"
+
+const args = process.argv.slice(2)
+if (args[1] === 'refresh') {
+    cleanByChecker('aptos')
+}
+
+let stats = []
+let jsonData = []
+let csvData = []
+let p
+let csvWriter
+const filterSymbol = ['APT', 'USDT', 'USDC', 'DAI']
+let wallets = readWallets(config.modules.aptos.addresses)
+let iterations = wallets.length
+let iteration = 1
+const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic)
+
+
+async function getBalances(wallet, index) {
+    filterSymbol.forEach(symbol => {
+        stats[wallet].balances[symbol] = 0
+    })
+
+    let config = {
+        method: 'GET',
+        url: apiUrl + `/account/${wallet}/coins`,
+        timeout: 5000,
+        headers: reqheaders
+    }
+
+    let isBalancesCollected = false
+    let retry = 0
+
+    while (!isBalancesCollected) {
+        try {
+            await cloudscraper(config).then(async response => {
+                const data = JSON.parse(response)
+                Object.values(data.data).forEach(balance => {
+                    if (filterSymbol.includes(balance.symbol)) {
+                        stats[wallet].balances[balance.symbol] = balance.amount
+                    }
+                })
+                isBalancesCollected = true
+            })
+        } catch (e) {
+            if (config.debug) console.log(e.toString())
+            retry++
